@@ -1,0 +1,131 @@
+name: Theme Release (Reusable)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reusable workflow — called by each theme repo.
+# Org-level secrets required (set once in GitHub org Settings → Secrets):
+#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT_URL, R2_BUCKET_NAME
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_call:
+    inputs:
+      slug:
+        description: "Theme slug — used as the zip filename prefix (e.g. 'artimg')"
+        required: true
+        type: string
+    secrets:
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
+        required: true
+      R2_ENDPOINT_URL:
+        required: true
+      R2_BUCKET_NAME:
+        required: true
+
+jobs:
+  release:
+    name: Zip & Upload "${{ inputs.slug }}" to R2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # ── Detect version change on branch push ───────────────────────────────
+      - name: Check if version changed (branch push)
+        if: github.ref_type == 'branch'
+        id: branch_version
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          PREVIOUS=$(git show HEAD~1:package.json 2>/dev/null \
+            | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" \
+            || echo "none")
+
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+
+          if [ "$CURRENT" != "$PREVIOUS" ]; then
+            echo "should_upload=true" >> $GITHUB_OUTPUT
+            echo "✅ Version bumped: $PREVIOUS → $CURRENT"
+          else
+            echo "should_upload=false" >> $GITHUB_OUTPUT
+            echo "⏭️  Version unchanged ($CURRENT) — skipping upload"
+          fi
+
+      # ── On tag push, version comes from the tag name ───────────────────────
+      - name: Extract version from tag
+        if: github.ref_type == 'tag'
+        id: tag_version
+        run: |
+          echo "current=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "should_upload=true" >> $GITHUB_OUTPUT
+
+      # ── Merge into a single output ─────────────────────────────────────────
+      - name: Resolve final version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" == "tag" ]; then
+            echo "value=${{ steps.tag_version.outputs.current }}" >> $GITHUB_OUTPUT
+            echo "should_upload=true" >> $GITHUB_OUTPUT
+          else
+            echo "value=${{ steps.branch_version.outputs.current }}" >> $GITHUB_OUTPUT
+            echo "should_upload=${{ steps.branch_version.outputs.should_upload }}" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Create zip ─────────────────────────────────────────────────────────
+      - name: Create theme zip
+        if: steps.version.outputs.should_upload == 'true'
+        run: |
+          SLUG="${{ inputs.slug }}"
+          VERSION="${{ steps.version.outputs.value }}"
+          ZIP_NAME="${SLUG}-${VERSION}.zip"
+
+          echo "📦 Zipping $SLUG @ $VERSION → $ZIP_NAME"
+
+          zip -r "$ZIP_NAME" . \
+            --exclude "*.git*" \
+            --exclude "*node_modules*" \
+            --exclude "*dist/*" \
+            --exclude "*/.DS_Store" \
+            --exclude "*.env*" \
+            --exclude "*/.github/*"
+
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_ENV
+          echo "✅ $(du -sh $ZIP_NAME | cut -f1)"
+
+      # ── Upload to R2 ───────────────────────────────────────────────────────
+      - name: Upload to Cloudflare R2
+        if: steps.version.outputs.should_upload == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          SLUG="${{ inputs.slug }}"
+          VERSION="${{ steps.version.outputs.value }}"
+          ZIP_NAME="${SLUG}-${VERSION}.zip"
+          BUCKET="${{ secrets.R2_BUCKET_NAME }}"
+          ENDPOINT="${{ secrets.R2_ENDPOINT_URL }}"
+
+          echo "🚀 Uploading $ZIP_NAME to R2..."
+
+          # Versioned file — permanent record
+          aws s3 cp "$ZIP_NAME" "s3://${BUCKET}/${ZIP_NAME}" \
+            --endpoint-url "$ENDPOINT" \
+            --no-progress
+
+          # Latest alias — stable URL for customer portal
+          aws s3 cp "$ZIP_NAME" "s3://${BUCKET}/${SLUG}-latest.zip" \
+            --endpoint-url "$ENDPOINT" \
+            --no-progress
+
+          echo ""
+          echo "✅ Upload complete!"
+          echo "   Versioned : ${BUCKET}/${ZIP_NAME}"
+          echo "   Latest    : ${BUCKET}/${SLUG}-latest.zip"
+
+      - name: Skip notice
+        if: steps.version.outputs.should_upload != 'true'
+        run: echo "⏭️  Version unchanged — nothing uploaded."
