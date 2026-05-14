@@ -111,20 +111,12 @@ jobs:
 
           echo "🚀 Uploading $ZIP_NAME to R2..."
 
-          # Versioned file — permanent record
           aws s3 cp "$ZIP_NAME" "s3://${BUCKET}/${ZIP_NAME}" \
             --endpoint-url "$ENDPOINT" \
             --no-progress
 
-          # Latest alias — stable URL for customer portal
-          aws s3 cp "$ZIP_NAME" "s3://${BUCKET}/${SLUG}-latest.zip" \
-            --endpoint-url "$ENDPOINT" \
-            --no-progress
-
           echo ""
-          echo "✅ Upload complete!"
-          echo "   Versioned : ${BUCKET}/${ZIP_NAME}"
-          echo "   Latest    : ${BUCKET}/${SLUG}-latest.zip"
+          echo "✅ Upload complete: ${BUCKET}/${ZIP_NAME}"
 
       - name: Skip notice
         if: steps.version.outputs.should_upload != 'true'
