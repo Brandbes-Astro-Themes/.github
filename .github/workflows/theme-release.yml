@@ -13,6 +13,11 @@ on:
         description: "Theme slug — used as the zip filename prefix (e.g. 'artimg')"
         required: true
         type: string
+      force:
+        description: "Upload even if version hasn't changed (used for manual runs)"
+        required: false
+        type: boolean
+        default: false
     secrets:
       R2_ACCESS_KEY_ID:
         required: true
@@ -46,7 +51,10 @@ jobs:
 
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
 
-          if [ "$CURRENT" != "$PREVIOUS" ]; then
+          if [ "${{ inputs.force }}" == "true" ]; then
+            echo "should_upload=true" >> $GITHUB_OUTPUT
+            echo "⚡ Force upload — skipping version check (manual run)"
+          elif [ "$CURRENT" != "$PREVIOUS" ]; then
             echo "should_upload=true" >> $GITHUB_OUTPUT
             echo "✅ Version bumped: $PREVIOUS → $CURRENT"
           else
