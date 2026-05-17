@@ -61,7 +61,8 @@ jobs:
             --exclude "*dist/*" \
             --exclude "*/.DS_Store" \
             --exclude "*.env*" \
-            --exclude "*/.github/*"
+            --exclude "*/.github/*" \
+            --exclude "*/RELEASE.md"
 
           echo "zip_name=$ZIP_NAME" >> $GITHUB_ENV
           echo "✅ $(du -sh $ZIP_NAME | cut -f1)"
